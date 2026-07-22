@@ -82,4 +82,4 @@ Contributions are welcome. Open an issue or a pull request.
 
 ## License
 
-MIT — see [LICENSE](LICENSE.md).
+This project uses a custom **Intelbras Usage Restriction License** (see [LICENSE](LICENSE.md)) — a protest against the lack of public API documentation. In short: anyone may use this code **except** individuals or entities with a professional relationship with Intelbras (employees, professional installers of Intelbras systems, or contractors hired by Intelbras). The license is expected to change once Intelbras publishes adequate API documentation.
