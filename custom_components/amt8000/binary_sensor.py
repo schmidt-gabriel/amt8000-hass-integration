@@ -34,16 +34,15 @@ async def async_setup_entry(
     data = coordinator.data or {}
     enabled = data.get("enabledZones", [])
     status_bytes = data.get("zoneStatusBytes", {})
-    entities += [
-        AmtZoneSensor(
-            coordinator,
-            entry_id,
-            zone,
-            zone_names.get(zone),
-            _zone_device_class(status_bytes.get(zone, 0x01)),
+    for zone in enabled:
+        name = zone_names.get(zone)
+        entities.append(
+            AmtZoneSensor(
+                coordinator, entry_id, zone, name,
+                _zone_device_class(status_bytes.get(zone, 0x01)),
+            )
         )
-        for zone in enabled
-    ]
+        entities.append(AmtZoneTamperSensor(coordinator, entry_id, zone, name))
     async_add_entities(entities)
 
 
@@ -98,6 +97,25 @@ class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
             "bypassed": self._zone in data.get("bypassZones", []),
             "tamper": self._zone in data.get("tamperZones", []),
         }
+
+
+class AmtZoneTamperSensor(AmtBaseEntity, BinarySensorEntity):
+    """Tamper detection for a single zone (on = tampered)."""
+
+    _attr_device_class = BinarySensorDeviceClass.TAMPER
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
+        """Initialize the per-zone tamper sensor."""
+        super().__init__(coordinator, entry_id)
+        self._zone = zone
+        self._attr_name = f"Tamper {name or f'Zona {zone}'}"
+        self._attr_unique_id = f"{entry_id}_zone_{zone}_tamper"
+
+    @property
+    def is_on(self) -> bool:
+        """Return True if the zone is tampered."""
+        return self._zone in self._data.get("tamperZones", [])
 
 
 class AmtTamperSensor(AmtBaseEntity, BinarySensorEntity):
