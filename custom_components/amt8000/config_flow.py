@@ -12,34 +12,34 @@ from homeassistant.data_entry_flow import FlowResult
 from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
-from .isec2.client import Client as ISecClient
+from .isec2.client import AuthError, Client as ISecClient
 
 LOGGER = logging.getLogger(__name__)
 
 STEP_USER_DATA_SCHEMA = vol.Schema(
     {
         vol.Required("host"): str,
-        vol.Required("port"): int,
+        vol.Required("port", default=9009): int,
         vol.Required("password"): str,
     }
 )
 
-async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
-    """Validate the user input allows us to connect.
 
-    Data has the keys from STEP_USER_DATA_SCHEMA with values provided by the user.
-    """
+def _validate_blocking(data: dict[str, Any]) -> None:
+    """Connect and authenticate. Runs in an executor thread."""
     client = ISecClient(data["host"], data["port"])
     client.connect()
-    auth = client.auth(data["password"])
-    client.close()
+    try:
+        client.auth(data["password"])
+    finally:
+        client.close()
 
-    if auth:
-        LOGGER.info("AMT logged in!")
-        return {"title": "AMT-8000"}
 
-    LOGGER.error("Auth failed!")
-    raise InvalidAuth
+async def validate_input(hass: HomeAssistant, data: dict[str, Any]) -> dict[str, Any]:
+    """Validate the user input allows us to connect."""
+    await hass.async_add_executor_job(_validate_blocking, data)
+    LOGGER.info("AMT logged in!")
+    return {"title": "AMT-8000"}
 
 
 class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -57,7 +57,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 info = await validate_input(self.hass, user_input)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
-            except InvalidAuth:
+            except (InvalidAuth, AuthError):
                 errors["base"] = "invalid_auth"
             except Exception:  # pylint: disable=broad-except
                 LOGGER.exception("Unexpected exception")

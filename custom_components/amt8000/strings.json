@@ -4,7 +4,7 @@
       "user": {
         "data": {
           "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::port%]",
+          "port": "[%key:common::config_flow::data::port%]",
           "password": "[%key:common::config_flow::data::password%]"
         }
       }

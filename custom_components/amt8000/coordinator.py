@@ -1,19 +1,22 @@
-from datetime import timedelta, datetime
+"""Data update coordinator for the AMT-8000 integration."""
+import logging
+from datetime import timedelta
+from threading import Lock
 
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
+    UpdateFailed,
 )
 
-from .isec2.client import Client as ISecClient
-
-import logging
+from .isec2.client import Client as ISecClient, CommunicationError
 
 LOGGER = logging.getLogger(__name__)
+
 
 class AmtCoordinator(DataUpdateCoordinator):
     """Coordinate the amt status update."""
 
-    def __init__(self, hass, isec_client: ISecClient, password):
+    def __init__(self, hass, isec_client: ISecClient, password, lock: Lock):
         """Initialize my coordinator."""
         super().__init__(
             hass,
@@ -23,36 +26,61 @@ class AmtCoordinator(DataUpdateCoordinator):
         )
         self.isec_client = isec_client
         self.password = password
-        self.next_update = datetime.now()
-        self.stored_status = None
-        self.attemt = 0
+        # Shared with the alarm panel entity so that polling and user commands
+        # never touch the single-session panel from two executor threads at once.
+        self._lock = lock
+        # Zone names are static; read once inside the first poll session and cached
+        # here (reading them in a separate session is fragile: the single-session
+        # panel may report "busy" on the immediate reconnect).
+        self.zone_names: dict[int, str] = {}
+
+    def _fetch_status(self):
+        """Connect, authenticate, read status (with per-zone data) and close.
+
+        Runs in an executor thread; the lock serializes access to the panel.
+        Zone names are read once, in this same session, the first time.
+        """
+        with self._lock:
+            self.isec_client.connect()
+            try:
+                self.isec_client.auth(self.password)
+                data = self.isec_client.status_with_zones()
+                if not self.zone_names:
+                    try:
+                        self.zone_names = self.isec_client.zone_names()
+                    except CommunicationError as err:
+                        LOGGER.warning("Could not read AMT-8000 zone names: %s", err)
+                return data
+            finally:
+                self.isec_client.close()
 
     async def _async_update_data(self):
-        """Retrieve the current status."""
-        self.attemt += 1
-
-        if(datetime.now() < self.next_update):
-           return self.stored_status
-
+        """Retrieve the current status without blocking the event loop."""
         try:
-          LOGGER.info("retrieving amt-8000 updated status...")
-          self.isec_client.connect()
-          self.isec_client.auth(self.password)
-          status = self.isec_client.status()
-          LOGGER.info(f"AMT-8000 new state: {status}")
-          self.isec_client.close()
+            return await self.hass.async_add_executor_job(self._fetch_status)
+        except Exception as err:  # noqa: BLE001 - surfaced as UpdateFailed
+            raise UpdateFailed(f"Error communicating with AMT-8000: {err}") from err
 
-          self.stored_status = status
-          self.attemt = 0
-          self.next_update = datetime.now()
+    def _run_locked(self, command):
+        """Run a client command inside an authenticated, locked session.
 
-          return status
-        except Exception as e:
-          print(f"Coordinator update error: {e}")
-          seconds = 2 ** self.attemt
-          time_difference = timedelta(seconds=seconds)
-          self.next_update = datetime.now() + time_difference
-          print(f"Next retry after {self.next_update}")
+        `command` receives the connected ISecClient and returns its result.
+        Runs in an executor thread; the lock serializes access to the panel.
+        """
+        with self._lock:
+            self.isec_client.connect()
+            try:
+                self.isec_client.auth(self.password)
+                return command(self.isec_client)
+            finally:
+                self.isec_client.close()
 
-        finally:
-           self.isec_client.close()
+    async def async_execute(self, command):
+        """Run a command off the event loop, then refresh the status.
+
+        Used by the alarm panel entity and the panic button so every write
+        goes through the same lock as the polling loop.
+        """
+        result = await self.hass.async_add_executor_job(self._run_locked, command)
+        await self.async_request_refresh()
+        return result
