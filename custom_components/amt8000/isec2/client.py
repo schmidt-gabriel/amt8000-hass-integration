@@ -31,6 +31,12 @@ CMD_BYE = 0xF0F1
 CMD_STATUS = 0x0B4A
 CMD_ARM_DISARM = 0x401E
 CMD_PANIC = 0x401A
+CMD_ZONE_SIGNAL = 0x0B73   # nivel de sinal por zona (0xff = zona inexistente)
+CMD_ZONE_STATUS = 0x0B74   # byte de status por zona
+CMD_READ_CONFIG = 0x33E0   # leitura de config por indice (nomes de zona)
+
+MAX_ZONES = 64
+ZONE_ABSENT = 0xFF         # valor de sinal para zona nao configurada
 
 # comandos de resposta especiais da central
 CMD_BUSY = 0xF0F7  # "central ocupada" (ja ha outra sessao)
@@ -306,6 +312,62 @@ class Client:
         """Consulta e devolve o status atual da central."""
         _cmd, payload = self._command(CMD_STATUS)
         return build_status(payload)
+
+    def zone_signals(self):
+        """0x0b73: nivel de sinal por zona (lista de 64; 0xff = zona inexistente)."""
+        _cmd, payload = self._command(CMD_ZONE_SIGNAL, [0x01])
+        # payload[0] e o echo do parametro; zonas 1..64 vem a seguir
+        return list(payload[1:1 + MAX_ZONES])
+
+    def zone_status_bytes(self):
+        """0x0b74: byte de status por zona (lista de 64; zona 1 em [0])."""
+        _cmd, payload = self._command(CMD_ZONE_STATUS, [0x01])
+        return list(payload[0:MAX_ZONES])
+
+    def zone_names(self):
+        """0x33e0: nomes de zona. Retorna dict {zona(1..64): nome}.
+
+        A resposta traz registros de 15 bytes: [indice(1)][nome(14)].
+        """
+        names = {}
+        for base in (0x00, 0x10, 0x20, 0x30):
+            _cmd, payload = self._command(
+                CMD_READ_CONFIG, list(range(base, base + 0x10))
+            )
+            off = 0
+            while off + 15 <= len(payload):
+                rec = payload[off:off + 15]
+                idx = rec[0]
+                name = bytes(rec[1:]).decode("latin1").rstrip("\x00 ").strip()
+                names[idx + 1] = name
+                off += 15
+        return names
+
+    def status_with_zones(self):
+        """Status completo: 0x0b4a + sinal (0x0b73) + status por zona (0x0b74).
+
+        Tudo na mesma sessao autenticada. Acrescenta ao dict de status:
+          enabledZones: lista de zonas configuradas (sinal != 0xff)
+          zoneSignals:  {zona: nivel de sinal}
+          zoneStatusBytes: {zona: byte de status}
+        """
+        st = self.status()
+        try:
+            signals = self.zone_signals()
+        except CommunicationError:
+            signals = []
+        try:
+            status_bytes = self.zone_status_bytes()
+        except CommunicationError:
+            status_bytes = []
+
+        enabled = [i + 1 for i, v in enumerate(signals) if v != ZONE_ABSENT]
+        st["enabledZones"] = enabled
+        st["zoneSignals"] = {z: signals[z - 1] for z in enabled}
+        st["zoneStatusBytes"] = {
+            z: status_bytes[z - 1] for z in enabled if z - 1 < len(status_bytes)
+        }
+        return st
 
     def arm_system(self, partition):
         """Arma a central. partition=0 arma tudo (0xFF)."""

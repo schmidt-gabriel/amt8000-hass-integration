@@ -1,4 +1,4 @@
-"""Binary sensors for the AMT-8000: zones, tamper, siren and low battery."""
+"""Binary sensors for the AMT-8000: auto-detected zones, tamper, siren, battery."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_MAX_ZONES, DEFAULT_MAX_ZONES, DOMAIN
+from .const import DOMAIN
 from .entity import AmtBaseEntity
 
 
@@ -20,32 +20,36 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the AMT-8000 binary sensors."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    store = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = store["coordinator"]
+    zone_names = store.get("zone_names", {})
     entry_id = config_entry.entry_id
-    max_zones = config_entry.options.get(CONF_MAX_ZONES, DEFAULT_MAX_ZONES)
 
     entities: list[BinarySensorEntity] = [
         AmtTamperSensor(coordinator, entry_id),
         AmtSirenSensor(coordinator, entry_id),
         AmtBatteryLowSensor(coordinator, entry_id),
     ]
+    # Auto-detected zones: only those reported as configured by the panel.
+    enabled = (coordinator.data or {}).get("enabledZones", [])
     entities += [
-        AmtZoneSensor(coordinator, entry_id, zone)
-        for zone in range(1, max_zones + 1)
+        AmtZoneSensor(coordinator, entry_id, zone, zone_names.get(zone))
+        for zone in enabled
     ]
     async_add_entities(entities)
 
 
 class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
-    """A single alarm zone (on = open)."""
+    """A configured alarm zone (on = open), with its name and signal level."""
 
     _attr_device_class = BinarySensorDeviceClass.OPENING
 
-    def __init__(self, coordinator, entry_id: str, zone: int) -> None:
+    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
         """Initialize the zone sensor."""
         super().__init__(coordinator, entry_id)
         self._zone = zone
-        self._attr_name = f"Zona {zone}"
+        # Use the panel's zone name; fall back to "Zona N".
+        self._attr_name = name or f"Zona {zone}"
         self._attr_unique_id = f"{entry_id}_zone_{zone}"
 
     @property
@@ -55,10 +59,13 @@ class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Expose per-zone alarm/bypass state as attributes."""
+        """Expose per-zone signal, alarm and bypass state."""
+        data = self._data
         return {
-            "firing": self._zone in self._data.get("firingZones", []),
-            "bypassed": self._zone in self._data.get("bypassZones", []),
+            "zone": self._zone,
+            "signal": data.get("zoneSignals", {}).get(self._zone),
+            "firing": self._zone in data.get("firingZones", []),
+            "bypassed": self._zone in data.get("bypassZones", []),
         }
 
 

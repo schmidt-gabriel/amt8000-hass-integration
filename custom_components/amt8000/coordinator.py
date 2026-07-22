@@ -31,7 +31,7 @@ class AmtCoordinator(DataUpdateCoordinator):
         self._lock = lock
 
     def _fetch_status(self):
-        """Connect, authenticate, read status and close.
+        """Connect, authenticate, read status (with per-zone data) and close.
 
         Runs in an executor thread; the lock serializes access to the panel.
         """
@@ -39,7 +39,17 @@ class AmtCoordinator(DataUpdateCoordinator):
             self.isec_client.connect()
             try:
                 self.isec_client.auth(self.password)
-                return self.isec_client.status()
+                return self.isec_client.status_with_zones()
+            finally:
+                self.isec_client.close()
+
+    def read_zone_names(self):
+        """Read the configured zone names once (blocking, under the lock)."""
+        with self._lock:
+            self.isec_client.connect()
+            try:
+                self.isec_client.auth(self.password)
+                return self.isec_client.zone_names()
             finally:
                 self.isec_client.close()
 

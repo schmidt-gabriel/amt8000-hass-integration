@@ -17,18 +17,5 @@
                 }
             }
         }
-    },
-    "options": {
-        "step": {
-            "init": {
-                "title": "AMT-8000 options",
-                "data": {
-                    "max_zones": "Number of zones to expose"
-                },
-                "data_description": {
-                    "max_zones": "How many zone sensors to create (1-64). Match your installed zones."
-                }
-            }
-        }
     }
 }

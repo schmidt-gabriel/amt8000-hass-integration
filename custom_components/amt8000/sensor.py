@@ -1,7 +1,11 @@
-"""Diagnostic sensors for the AMT-8000: firmware, model and battery."""
+"""Sensors for the AMT-8000: firmware/model/battery and per-zone signal."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity import EntityCategory
@@ -16,16 +20,24 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the AMT-8000 diagnostic sensors."""
-    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    """Set up the AMT-8000 sensors."""
+    store = hass.data[DOMAIN][config_entry.entry_id]
+    coordinator = store["coordinator"]
+    zone_names = store.get("zone_names", {})
     entry_id = config_entry.entry_id
-    async_add_entities(
-        [
-            AmtFirmwareSensor(coordinator, entry_id),
-            AmtModelSensor(coordinator, entry_id),
-            AmtBatterySensor(coordinator, entry_id),
-        ]
-    )
+
+    entities: list[SensorEntity] = [
+        AmtFirmwareSensor(coordinator, entry_id),
+        AmtModelSensor(coordinator, entry_id),
+        AmtBatterySensor(coordinator, entry_id),
+    ]
+    # One signal sensor per auto-detected zone.
+    enabled = (coordinator.data or {}).get("enabledZones", [])
+    entities += [
+        AmtZoneSignalSensor(coordinator, entry_id, zone, zone_names.get(zone))
+        for zone in enabled
+    ]
+    async_add_entities(entities)
 
 
 class AmtFirmwareSensor(AmtBaseEntity, SensorEntity):
@@ -81,3 +93,23 @@ class AmtBatterySensor(AmtBaseEntity, SensorEntity):
     def native_value(self) -> str | None:
         """Return the battery status."""
         return self._data.get("batteryStatus")
+
+
+class AmtZoneSignalSensor(AmtBaseEntity, SensorEntity):
+    """Wireless signal level of a zone (0 = worst, 10 = best)."""
+
+    _attr_icon = "mdi:signal"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
+        """Initialize the zone signal sensor."""
+        super().__init__(coordinator, entry_id)
+        self._zone = zone
+        self._attr_name = f"Sinal {name or f'Zona {zone}'}"
+        self._attr_unique_id = f"{entry_id}_zone_{zone}_signal"
+
+    @property
+    def native_value(self) -> int | None:
+        """Return the current signal level for the zone."""
+        return self._data.get("zoneSignals", {}).get(self._zone)

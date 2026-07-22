@@ -17,18 +17,5 @@
                 }
             }
         }
-    },
-    "options": {
-        "step": {
-            "init": {
-                "title": "Opções do AMT-8000",
-                "data": {
-                    "max_zones": "Número de zonas a expor"
-                },
-                "data_description": {
-                    "max_zones": "Quantos sensores de zona criar (1-64). Use o número de zonas instaladas."
-                }
-            }
-        }
     }
 }
