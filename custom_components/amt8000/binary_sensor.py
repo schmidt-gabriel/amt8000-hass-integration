@@ -31,27 +31,56 @@ async def async_setup_entry(
         AmtBatteryLowSensor(coordinator, entry_id),
     ]
     # Auto-detected zones: only those reported as configured by the panel.
-    enabled = (coordinator.data or {}).get("enabledZones", [])
+    data = coordinator.data or {}
+    enabled = data.get("enabledZones", [])
+    status_bytes = data.get("zoneStatusBytes", {})
     entities += [
-        AmtZoneSensor(coordinator, entry_id, zone, zone_names.get(zone))
+        AmtZoneSensor(
+            coordinator,
+            entry_id,
+            zone,
+            zone_names.get(zone),
+            _zone_device_class(status_bytes.get(zone, 0x01)),
+        )
         for zone in enabled
     ]
     async_add_entities(entities)
 
 
+def _zone_device_class(status_byte: int) -> BinarySensorDeviceClass:
+    """Classify a zone from its 0x0b74 status byte.
+
+    Bit 0 is the panel's interior/perimeter attribute: interior zones
+    (motion/presence) have it set, perimeter zones (door/window) do not.
+    """
+    if status_byte & 0x01:
+        return BinarySensorDeviceClass.MOTION
+    return BinarySensorDeviceClass.DOOR
+
+
 class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
-    """A configured alarm zone (on = open), with its name and signal level."""
+    """A configured alarm zone (on = open/triggered), with name and signal.
 
-    _attr_device_class = BinarySensorDeviceClass.OPENING
-    _attr_icon = "mdi:motion-sensor"
+    The device class (motion vs door) is derived from the panel's own zone
+    attribute, so presence zones get a motion-sensor icon and door/window
+    zones get a door icon.
+    """
 
-    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
+    def __init__(
+        self,
+        coordinator,
+        entry_id: str,
+        zone: int,
+        name: str | None,
+        device_class: BinarySensorDeviceClass,
+    ) -> None:
         """Initialize the zone sensor."""
         super().__init__(coordinator, entry_id)
         self._zone = zone
         # Use the panel's zone name; fall back to "Zona N".
         self._attr_name = name or f"Zona {zone}"
         self._attr_unique_id = f"{entry_id}_zone_{zone}"
+        self._attr_device_class = device_class
 
     @property
     def is_on(self) -> bool:
