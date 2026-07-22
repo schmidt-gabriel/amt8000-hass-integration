@@ -89,13 +89,14 @@ class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict:
-        """Expose per-zone signal, alarm and bypass state."""
+        """Expose per-zone signal, alarm, bypass and tamper state."""
         data = self._data
         return {
             "zone": self._zone,
             "signal": data.get("zoneSignals", {}).get(self._zone),
             "firing": self._zone in data.get("firingZones", []),
             "bypassed": self._zone in data.get("bypassZones", []),
+            "tamper": self._zone in data.get("tamperZones", []),
         }
 
 

@@ -33,6 +33,7 @@ CMD_ARM_DISARM = 0x401E
 CMD_PANIC = 0x401A
 CMD_ZONE_SIGNAL = 0x0B73   # nivel de sinal por zona (0xff = zona inexistente)
 CMD_ZONE_STATUS = 0x0B74   # byte de status por zona
+CMD_EXT_STATUS = 0x0B7A    # status estendido (contem bitmap de tamper por zona)
 CMD_READ_CONFIG = 0x33E0   # leitura de config por indice (nomes de zona)
 
 MAX_ZONES = 64
@@ -367,6 +368,16 @@ class Client:
         st["zoneStatusBytes"] = {
             z: status_bytes[z - 1] for z in enabled if z - 1 < len(status_bytes)
         }
+
+        # Per-zone tamper comes from the extended status (0x0b7a): an 8-octet
+        # bitmap at offset 89 (zone 1 = byte 89 bit 0). Verified live.
+        try:
+            _c, ext = self._command(CMD_EXT_STATUS, [0x01])
+            st["tamperZones"] = zone_numbers(ext, 89, 97)
+        except CommunicationError:
+            st["tamperZones"] = []
+        if st["tamperZones"]:
+            st["tamper"] = True
         return st
 
     def arm_system(self, partition):
