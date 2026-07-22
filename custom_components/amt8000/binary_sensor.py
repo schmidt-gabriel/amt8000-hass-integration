@@ -43,6 +43,7 @@ class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
     """A configured alarm zone (on = open), with its name and signal level."""
 
     _attr_device_class = BinarySensorDeviceClass.OPENING
+    _attr_icon = "mdi:motion-sensor"
 
     def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
         """Initialize the zone sensor."""
