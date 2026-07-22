@@ -8,7 +8,7 @@ from homeassistant.helpers.update_coordinator import (
     UpdateFailed,
 )
 
-from .isec2.client import Client as ISecClient
+from .isec2.client import Client as ISecClient, CommunicationError
 
 LOGGER = logging.getLogger(__name__)
 
@@ -29,27 +29,28 @@ class AmtCoordinator(DataUpdateCoordinator):
         # Shared with the alarm panel entity so that polling and user commands
         # never touch the single-session panel from two executor threads at once.
         self._lock = lock
+        # Zone names are static; read once inside the first poll session and cached
+        # here (reading them in a separate session is fragile: the single-session
+        # panel may report "busy" on the immediate reconnect).
+        self.zone_names: dict[int, str] = {}
 
     def _fetch_status(self):
         """Connect, authenticate, read status (with per-zone data) and close.
 
         Runs in an executor thread; the lock serializes access to the panel.
+        Zone names are read once, in this same session, the first time.
         """
         with self._lock:
             self.isec_client.connect()
             try:
                 self.isec_client.auth(self.password)
-                return self.isec_client.status_with_zones()
-            finally:
-                self.isec_client.close()
-
-    def read_zone_names(self):
-        """Read the configured zone names once (blocking, under the lock)."""
-        with self._lock:
-            self.isec_client.connect()
-            try:
-                self.isec_client.auth(self.password)
-                return self.isec_client.zone_names()
+                data = self.isec_client.status_with_zones()
+                if not self.zone_names:
+                    try:
+                        self.zone_names = self.isec_client.zone_names()
+                    except CommunicationError as err:
+                        LOGGER.warning("Could not read AMT-8000 zone names: %s", err)
+                return data
             finally:
                 self.isec_client.close()
 

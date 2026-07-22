@@ -31,22 +31,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = AmtCoordinator(hass, isec_client, entry.data["password"], lock)
 
     # First poll: raises ConfigEntryNotReady (and retries) if the panel is
-    # unreachable, instead of setting up broken entities.
+    # unreachable, instead of setting up broken entities. Zone names are read
+    # inside this same session and cached on the coordinator.
     await coordinator.async_config_entry_first_refresh()
-
-    # Zone names are static config, read once here so entities can be named.
-    try:
-        zone_names = await hass.async_add_executor_job(coordinator.read_zone_names)
-    except Exception as err:  # noqa: BLE001 - names are optional, keep setup alive
-        LOGGER.warning("Could not read AMT-8000 zone names: %s", err)
-        zone_names = {}
 
     hass.data.setdefault(DOMAIN, {})
     hass.data[DOMAIN][entry.entry_id] = {
         "client": isec_client,
         "coordinator": coordinator,
         "lock": lock,
-        "zone_names": zone_names,
+        "zone_names": coordinator.zone_names,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
