@@ -49,3 +49,27 @@ class AmtCoordinator(DataUpdateCoordinator):
             return await self.hass.async_add_executor_job(self._fetch_status)
         except Exception as err:  # noqa: BLE001 - surfaced as UpdateFailed
             raise UpdateFailed(f"Error communicating with AMT-8000: {err}") from err
+
+    def _run_locked(self, command):
+        """Run a client command inside an authenticated, locked session.
+
+        `command` receives the connected ISecClient and returns its result.
+        Runs in an executor thread; the lock serializes access to the panel.
+        """
+        with self._lock:
+            self.isec_client.connect()
+            try:
+                self.isec_client.auth(self.password)
+                return command(self.isec_client)
+            finally:
+                self.isec_client.close()
+
+    async def async_execute(self, command):
+        """Run a command off the event loop, then refresh the status.
+
+        Used by the alarm panel entity and the panic button so every write
+        goes through the same lock as the polling loop.
+        """
+        result = await self.hass.async_add_executor_job(self._run_locked, command)
+        await self.async_request_refresh()
+        return result

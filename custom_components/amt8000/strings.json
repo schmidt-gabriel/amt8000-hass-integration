@@ -4,7 +4,7 @@
       "user": {
         "data": {
           "host": "[%key:common::config_flow::data::host%]",
-          "username": "[%key:common::config_flow::data::port%]",
+          "port": "[%key:common::config_flow::data::port%]",
           "password": "[%key:common::config_flow::data::password%]"
         }
       }
@@ -16,6 +16,19 @@
     },
     "abort": {
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "AMT-8000 options",
+        "data": {
+          "max_zones": "Number of zones to expose"
+        },
+        "data_description": {
+          "max_zones": "How many zone sensors to create (1-64). Match your installed zones."
+        }
+      }
     }
   }
 }
