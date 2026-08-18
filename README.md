@@ -1,5 +1,10 @@
 # Intelbras AMT-8000 — Home Assistant Integration
 
+<img src="https://raw.githubusercontent.com/schmidt-gabriel/amt8000-hass-integration/main/custom_components/amt8000/brand/logo.png" alt="Intelbras" width="240">
+
+[![Validate](https://github.com/schmidt-gabriel/amt8000-hass-integration/actions/workflows/validate.yml/badge.svg)](https://github.com/schmidt-gabriel/amt8000-hass-integration/actions/workflows/validate.yml)
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=schmidt-gabriel&repository=amt8000-hass-integration&category=integration)
+
 Monitor and control an **Intelbras AMT-8000 / AMT-8000 PRO** alarm panel from Home Assistant, over the local network (ISECNet2, port 9009). No cloud and no Intelbras account required.
 
 > **Important Notice:** If you have any affiliation with Intelbras, please read the [LICENSE](LICENSE.md) carefully before proceeding.
@@ -33,6 +38,8 @@ Because the panel is single-session, keep the **AMT Remoto Mobile / Guardian app
 ## Installation
 
 ### HACS (custom repository)
+
+Click the **Open in HACS** badge above, or add it by hand:
 
 1. HACS → Integrations → ⋮ menu → **Custom repositories**.
 2. Add `https://github.com/schmidt-gabriel/amt8000-hass-integration` with category **Integration**.

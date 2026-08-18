@@ -1,12 +1,12 @@
 {
   "domain": "amt8000",
   "name": "AMT-8000",
-  "codeowners": ["@merencia"],
+  "codeowners": ["@schmidt-gabriel"],
   "config_flow": true,
   "dependencies": [],
-  "documentation": "https://github.com/merencia/amt8000-hass-integration",
+  "documentation": "https://github.com/schmidt-gabriel/amt8000-hass-integration",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/schmidt-gabriel/amt8000-hass-integration/issues",
   "requirements": [],
-  "issue_tracker": "https://github.com/merencia/amt8000-hass-integration/issues",
-  "version": "0.4.1"
+  "version": "0.4.2"
 }
