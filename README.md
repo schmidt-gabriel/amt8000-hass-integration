@@ -7,8 +7,6 @@
 
 Monitor and control an **Intelbras AMT-8000 / AMT-8000 PRO** alarm panel from Home Assistant, over the local network (ISECNet2, port 9009). No cloud and no Intelbras account required.
 
-> **Important Notice:** If you have any affiliation with Intelbras, please read the [LICENSE](LICENSE.md) carefully before proceeding.
-
 ## Features
 
 - **Alarm panel** — arm (away), disarm, and read the current state (disarmed / armed / triggered).
@@ -89,4 +87,8 @@ Contributions are welcome. Open an issue or a pull request.
 
 ## License
 
-This project uses a custom **Intelbras Usage Restriction License** (see [LICENSE](LICENSE.md)) — a protest against the lack of public API documentation. In short: anyone may use this code **except** individuals or entities with a professional relationship with Intelbras (employees, professional installers of Intelbras systems, or contractors hired by Intelbras). The license is expected to change once Intelbras publishes adequate API documentation.
+MIT (see [LICENSE](LICENSE.md)).
+
+This project started under a custom **Intelbras Usage Restriction License**, written as a protest against the lack of public API documentation for the AMT-8000: it forbade use by anyone with a professional relationship with Intelbras. That license had no recognized SPDX identifier, which kept the project out of the HACS default store, so it was relicensed under MIT.
+
+The protest stands, now as a request rather than a restriction. Everything this integration does was reverse engineered from an undocumented protocol. If you work for or with Intelbras, please publish proper API documentation.
