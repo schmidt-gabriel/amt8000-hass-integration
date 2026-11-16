@@ -135,6 +135,43 @@ def zone_numbers(payload, start, end):
     return zones
 
 
+def bitmap_or_none(payload, start, end):
+    """zone_numbers(payload, start, end), ou None se o payload for curto.
+
+    None significa "estado desconhecido" (firmware nao manda esse bloco),
+    diferente de [] (bloco presente, nenhum bit setado).
+    """
+    if len(payload) < end:
+        return None
+    return zone_numbers(payload, start, end)
+
+
+# Blocos de falha no payload 0x0b4a (offsets 0-based), 16 octetos cada:
+# zonas (8), teclados (2), sirenes (2), repetidores (2), 2 desconhecidos.
+# Bit n de cada grupo = dispositivo n+1. Sirene 1 em supervisao (byte 83
+# bit 0) confirmada ao vivo (firmware 3.2.72); o resto e inferido.
+FAULT_BLOCKS = {
+    "commFailure": 73,
+    "tamper": 89,
+    "lowBattery": 105,
+}
+DEVICE_GROUPS = (("Keypads", 8), ("Sirens", 10), ("Repeaters", 12))
+
+
+def device_faults(payload):
+    """Listas de falha por tipo de dispositivo (teclado/sirene/repetidor).
+
+    Chaves: commFailureSirens, tamperKeypads, lowBatteryRepeaters, etc.
+    Cada valor e a lista de numeros (1-based) ou None se o payload for curto.
+    """
+    faults = {}
+    for prefix, base in FAULT_BLOCKS.items():
+        for suffix, offset in DEVICE_GROUPS:
+            start = base + offset
+            faults[prefix + suffix] = bitmap_or_none(payload, start, start + 2)
+    return faults
+
+
 def _bcd(value):
     """Decodifica um octeto BCD; None se algum nibble for > 9."""
     hi, lo = (value >> 4) & 0x0F, value & 0x0F
@@ -192,17 +229,19 @@ def build_status(payload):
         "openZones": zone_numbers(payload, 38, 46),
         "firingZones": zone_numbers(payload, 46, 54),
         "bypassZones": zone_numbers(payload, 54, 62),
-        # flag geral de "problemas detectados" (o que o app Intelbras mostra)
+        # flag geral de "problemas" (byte 20 bit 0). No firmware 3.2.72 ficou
+        # 0 com o app mostrando problema (falha de supervisao da sirene), entao
+        # nao e confiavel; exposto so para diagnostico.
         "problem": (payload[20] & 0x01) > 0,
-        # falha de supervisao / comunicacao por zona (offset nao verificado).
+        # falha de supervisao / comunicacao por zona: mesmo bloco em que a
+        # supervisao da sirene 1 acende ao vivo (byte 83).
         # None = payload curto demais (estado desconhecido), diferente de [].
-        "commFailureZones": (
-            zone_numbers(payload, 73, 81) if len(payload) >= 81 else None
-        ),
+        "commFailureZones": bitmap_or_none(payload, 73, 81),
         # bateria fraca por zona (offset nao verificado); None se payload curto
-        "lowBatteryZones": (
-            zone_numbers(payload, 105, 113) if len(payload) >= 113 else None
-        ),
+        "lowBatteryZones": bitmap_or_none(payload, 105, 113),
+        # teclados / sirenes / repetidores: falha de supervisao, tamper e
+        # bateria fraca (commFailureSirens, tamperKeypads, ...)
+        **device_faults(payload),
         "panelTime": panel_time_for(payload),
         # payloads crus para diagnostico (0x0b7a e preenchido em status_with_zones)
         "raw": {"status": bytes(payload).hex(), "extStatus": None},
