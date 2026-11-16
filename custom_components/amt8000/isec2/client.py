@@ -135,6 +135,35 @@ def zone_numbers(payload, start, end):
     return zones
 
 
+def _bcd(value):
+    """Decodifica um octeto BCD; None se algum nibble for > 9."""
+    hi, lo = (value >> 4) & 0x0F, value & 0x0F
+    if hi > 9 or lo > 9:
+        return None
+    return hi * 10 + lo
+
+
+def panel_time_for(payload):
+    """Data/hora da central: bytes 64..69 em BCD (dd mm yy hh mm ss).
+
+    Retorna "20YY-MM-DD hh:mm:ss" ou None se o payload for curto ou o BCD
+    for invalido. Offset ainda nao verificado em hardware real.
+    """
+    if len(payload) < 70:
+        return None
+    fields = [_bcd(b) for b in payload[64:70]]
+    if any(f is None for f in fields):
+        return None
+    day, month, year, hour, minute, second = fields
+    if not (1 <= day <= 31 and 1 <= month <= 12 and hour <= 23
+            and minute <= 59 and second <= 59):
+        return None
+    return (
+        f"20{year:02d}-{month:02d}-{day:02d} "
+        f"{hour:02d}:{minute:02d}:{second:02d}"
+    )
+
+
 def build_status(payload):
     """Monta o dict de status a partir do payload (sem header/checksum).
 
@@ -163,6 +192,20 @@ def build_status(payload):
         "openZones": zone_numbers(payload, 38, 46),
         "firingZones": zone_numbers(payload, 46, 54),
         "bypassZones": zone_numbers(payload, 54, 62),
+        # flag geral de "problemas detectados" (o que o app Intelbras mostra)
+        "problem": (payload[20] & 0x01) > 0,
+        # falha de supervisao / comunicacao por zona (offset nao verificado).
+        # None = payload curto demais (estado desconhecido), diferente de [].
+        "commFailureZones": (
+            zone_numbers(payload, 73, 81) if len(payload) >= 81 else None
+        ),
+        # bateria fraca por zona (offset nao verificado); None se payload curto
+        "lowBatteryZones": (
+            zone_numbers(payload, 105, 113) if len(payload) >= 113 else None
+        ),
+        "panelTime": panel_time_for(payload),
+        # payloads crus para diagnostico (0x0b7a e preenchido em status_with_zones)
+        "raw": {"status": bytes(payload).hex(), "extStatus": None},
     }
     return status
 
@@ -374,6 +417,7 @@ class Client:
         try:
             _c, ext = self._command(CMD_EXT_STATUS, [0x01])
             st["tamperZones"] = zone_numbers(ext, 89, 97)
+            st["raw"]["extStatus"] = bytes(ext).hex()
         except CommunicationError:
             st["tamperZones"] = []
         if st["tamperZones"]:

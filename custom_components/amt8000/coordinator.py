@@ -47,7 +47,11 @@ class AmtCoordinator(DataUpdateCoordinator):
                 data = self.isec_client.status_with_zones()
                 if not self.zone_names:
                     try:
-                        self.zone_names = self.isec_client.zone_names()
+                        names = self.isec_client.zone_names()
+                        # Update in place: entities and hass.data hold a
+                        # reference to this same dict.
+                        self.zone_names.clear()
+                        self.zone_names.update(names)
                     except CommunicationError as err:
                         LOGGER.warning("Could not read AMT-8000 zone names: %s", err)
                 return data

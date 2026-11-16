@@ -16,6 +16,8 @@ Monitor and control an **Intelbras AMT-8000 / AMT-8000 PRO** alarm panel from Ho
 - **Auto-detected zones** — the integration discovers which zones are actually configured on your panel and creates one entity per zone, **named with the panel's own zone names** (e.g. `Hall`, `Sala`, `Garagem`). No manual zone count to maintain.
 - **Per-zone signal** — a signal-level sensor for each zone (useful for wireless sensors).
 - **Diagnostics** — firmware version, model, and battery status sensors, plus tamper, siren, and low-battery binary sensors.
+- **Problems** — a panel-level `Problema` sensor mirroring the "problems detected" flag of the Intelbras app, and per-zone battery (`Bateria <zona>`) and supervision (`Supervisão <zona>`) sensors.
+- **Download diagnostics** — dumps the latest status with the raw protocol payloads, to help decode new fields.
 - **Single device** — everything is grouped under one `AMT-8000` device, with the Intelbras brand icon (Home Assistant 2026.3+).
 
 ## How it works
@@ -67,14 +69,39 @@ Entities appear automatically under the new **AMT-8000** device.
 | --- | --- |
 | `alarm_control_panel` | the alarm panel (arm away / disarm / triggered state) |
 | `button` | Panic |
-| `binary_sensor` | one per configured zone (open/closed, with `signal` / `firing` / `bypassed` attributes), plus Tamper, Siren, Low battery |
+| `binary_sensor` | one per configured zone (open/closed, with `signal` / `firing` / `bypassed` / `tamper` / `low_battery` / `comm_failure` attributes); per zone also `Tamper <zona>`, `Bateria <zona>` (low battery) and `Supervisão <zona>` (communication failure); plus Tamper, Siren, Low battery and `Problema` |
 | `sensor` | Firmware, Model, Battery, and one Signal sensor per zone |
 
 ## Notes and limitations
 
 - **Panic sounds the siren.** The panic button (and `alarm_trigger`) fire the real siren — test with care.
 - Zones follow the panel's configuration. After adding or removing zones on the panel, reload the integration (or restart Home Assistant) to pick up the change.
-- Per-zone **battery/tamper** flags are not decoded yet; global battery and tamper are exposed. Per zone you get open/closed, bypass, and signal.
+- Per-zone tamper is decoded from the extended status (0x0B7A, bytes 89–96) and verified on real hardware.
+
+### Problem detection
+
+The `Problema` binary sensor (diagnostic) turns on when the panel's general "problems detected" flag is set (status 0x0B4A, byte 20 bit 0) **or** a verified fault is active (zone tamper, panel tamper, panel battery low/dead). Its `active_problems` attribute lists what is going on, e.g. `Violação (tamper): Hall`, `Violação (tamper) da central`, `Bateria da central fraca`, and — from the unverified bitmaps below, for configured zones only — `Bateria fraca: Sala` or `Falha de supervisão: Garagem`. The unverified bitmaps only label the cause; they never turn the sensor on by themselves. When the flag is on but nothing decodes (for example a wireless siren supervision failure), it shows `Problema não identificado` — so the fault still surfaces in Home Assistant.
+
+The per-zone `Bateria <zona>` and `Supervisão <zona>` sensors are created **disabled by default** until their offsets are verified on real hardware; enable them from the entity settings if you want to try them. They report *unknown* if your firmware's status payload is too short to contain the bitmap.
+
+**Unverified offsets.** These fields come from community protocol notes and have **not** been confirmed on a real panel yet:
+
+| Field | Source (0-based offsets in the 0x0B4A payload) |
+| --- | --- |
+| General problem flag | byte 20, bit 0 |
+| Per-zone low battery (`Bateria <zona>`) | bitmap, bytes 105–112 |
+| Per-zone supervision / comm failure (`Supervisão <zona>`) | bitmap, bytes 73–80 |
+| Panel clock (`panelTime` in diagnostics) | bytes 64–69, BCD `dd mm yy hh mm ss` |
+
+AC failure, missing battery, siren and repeater faults are intentionally **not** exposed: their offsets are disputed and need live verification.
+
+### Helping decode more faults
+
+Settings → Devices & Services → AMT-8000 → ⋮ → **Download diagnostics** saves a JSON file with the latest status, the raw hex of the 0x0B4A and 0x0B7A payloads, and a full byte-by-byte dump (0-based offsets) of both payloads. Host and password are redacted, but the file still contains your zone names and the raw panel payloads — **review it before posting it publicly**. To map a fault:
+
+1. Download diagnostics with everything normal.
+2. Provoke one fault (remove a sensor battery, power off a wireless siren, open a sensor's cover…), wait ~20 s, and download again.
+3. Diff the full hex (`status_0b4a` and `ext_status_0b7a`) of the two files — not just the decoded fields — and open an issue with the offsets that changed.
 
 ## Acknowledgments
 
