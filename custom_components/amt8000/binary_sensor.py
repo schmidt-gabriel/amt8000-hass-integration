@@ -1,4 +1,4 @@
-"""Binary sensors for the AMT-8000: auto-detected zones, tamper, siren, battery."""
+"""Binary sensors for the AMT-8000: zones, tamper, siren, battery, problems."""
 from __future__ import annotations
 
 from homeassistant.components.binary_sensor import (
@@ -12,6 +12,39 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
 from .entity import AmtBaseEntity
+
+# Wireless device types reported in the 0x0b4a fault blocks:
+# (key suffix, singular label, entity name, unique_id slug).
+DEVICE_TYPES = (
+    ("Sirens", "Sirene", "Sirenes", "sirens"),
+    ("Repeaters", "Repetidor", "Repetidores", "repeaters"),
+    ("Keypads", "Teclado", "Teclados", "keypads"),
+)
+# Fault kinds: (key prefix, label, attribute prefix).
+FAULT_KINDS = (
+    ("commFailure", "Falha de supervisão", "comm_failure"),
+    ("tamper", "Violação (tamper)", "tamper"),
+    ("lowBattery", "Bateria fraca", "low_battery"),
+)
+
+
+def _device_fault_labels(data: dict, suffix: str, singular: str) -> list[str]:
+    """Labels like "Falha de supervisão: Sirene 1" for one device type."""
+    return [
+        f"{label}: {singular} {n}"
+        for prefix, label, _attr in FAULT_KINDS
+        for n in (data.get(prefix + suffix) or [])
+    ]
+
+
+def _device_fault_attributes(data: dict, suffix: str) -> dict:
+    """Per-kind number lists, e.g. {"comm_failure_sirens": [1]} (skips None)."""
+    attrs = {}
+    for prefix, _label, attr in FAULT_KINDS:
+        value = data.get(prefix + suffix)
+        if value is not None:
+            attrs[f"{attr}_{suffix.lower()}"] = value
+    return attrs
 
 
 async def async_setup_entry(
@@ -29,6 +62,7 @@ async def async_setup_entry(
         AmtTamperSensor(coordinator, entry_id),
         AmtSirenSensor(coordinator, entry_id),
         AmtBatteryLowSensor(coordinator, entry_id),
+        AmtProblemSensor(coordinator, entry_id),
     ]
     # Auto-detected zones: only those reported as configured by the panel.
     data = coordinator.data or {}
@@ -43,6 +77,17 @@ async def async_setup_entry(
             )
         )
         entities.append(AmtZoneTamperSensor(coordinator, entry_id, zone, name))
+        entities.append(AmtZoneBatterySensor(coordinator, entry_id, zone, name))
+        entities.append(AmtZoneSupervisionSensor(coordinator, entry_id, zone, name))
+    # One aggregate fault sensor per wireless device type, only when the
+    # panel's payload is long enough to carry that type's fault bits.
+    for suffix, singular, plural, slug in DEVICE_TYPES:
+        if any(data.get(prefix + suffix) is not None for prefix, _l, _a in FAULT_KINDS):
+            entities.append(
+                AmtDeviceFaultSensor(
+                    coordinator, entry_id, suffix, singular, plural, slug
+                )
+            )
     async_add_entities(entities)
 
 
@@ -96,6 +141,8 @@ class AmtZoneSensor(AmtBaseEntity, BinarySensorEntity):
             "firing": self._zone in data.get("firingZones", []),
             "bypassed": self._zone in data.get("bypassZones", []),
             "tamper": self._zone in data.get("tamperZones", []),
+            "low_battery": self._zone in (data.get("lowBatteryZones") or []),
+            "comm_failure": self._zone in (data.get("commFailureZones") or []),
         }
 
 
@@ -116,6 +163,187 @@ class AmtZoneTamperSensor(AmtBaseEntity, BinarySensorEntity):
     def is_on(self) -> bool:
         """Return True if the zone is tampered."""
         return self._zone in self._data.get("tamperZones", [])
+
+
+class AmtZoneBatterySensor(AmtBaseEntity, BinarySensorEntity):
+    """Low battery for a single zone (on = low).
+
+    Offset not yet verified live, so the entity starts disabled.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.BATTERY
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_entity_registry_enabled_default = False
+
+    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
+        """Initialize the per-zone battery sensor."""
+        super().__init__(coordinator, entry_id)
+        self._zone = zone
+        self._attr_name = f"Bateria {name or f'Zona {zone}'}"
+        self._attr_unique_id = f"{entry_id}_zone_{zone}_battery_low"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if the zone battery is low (None if not reported)."""
+        zones = self._data.get("lowBatteryZones")
+        if zones is None:
+            return None
+        return self._zone in zones
+
+
+class AmtZoneSupervisionSensor(AmtBaseEntity, BinarySensorEntity):
+    """Supervision / communication failure for a single zone (on = failure).
+
+    Same 0x0b4a block (bytes 73-80) whose siren bits were confirmed live, so
+    the entity is enabled by default.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry_id: str, zone: int, name: str | None) -> None:
+        """Initialize the per-zone supervision sensor."""
+        super().__init__(coordinator, entry_id)
+        self._zone = zone
+        self._attr_name = f"Supervisão {name or f'Zona {zone}'}"
+        self._attr_unique_id = f"{entry_id}_zone_{zone}_comm_failure"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if the zone lost communication (None if not reported)."""
+        zones = self._data.get("commFailureZones")
+        if zones is None:
+            return None
+        return self._zone in zones
+
+
+class AmtProblemSensor(AmtBaseEntity, BinarySensorEntity):
+    """Panel-level "problems detected" indicator.
+
+    Turns on for the panel's general problem flag (status byte 20 bit 0, which
+    did not track the app on firmware 3.2.72), zone/panel tamper, panel
+    battery low/dead, zone supervision failure, and any siren/repeater/keypad
+    supervision, tamper or low-battery fault. Zone low battery (still
+    unverified) only labels the cause in `active_problems`. If only the flag
+    is set and nothing decodes, it shows "Problema não identificado".
+    """
+
+    _attr_name = "Problema"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator, entry_id: str) -> None:
+        """Initialize the problem sensor."""
+        super().__init__(coordinator, entry_id)
+        self._attr_unique_id = f"{entry_id}_problem"
+
+    def _zone_label(self, zone: int) -> str:
+        # Same dict the zone entities were named from (updated in place).
+        names = getattr(self.coordinator, "zone_names", None) or {}
+        return names.get(zone) or f"Zona {zone}"
+
+    def _comm_failure_zones(self) -> list[int]:
+        enabled = set(self._data.get("enabledZones") or [])
+        return [z for z in (self._data.get("commFailureZones") or []) if z in enabled]
+
+    def _device_faults(self) -> list[str]:
+        problems = []
+        for suffix, singular, _plural, _slug in DEVICE_TYPES:
+            problems += _device_fault_labels(self._data, suffix, singular)
+        return problems
+
+    def _active_fault(self) -> bool:
+        data = self._data
+        return (
+            bool(data.get("tamperZones"))
+            or bool(data.get("tamper"))
+            or data.get("batteryStatus") in ("low", "dead")
+            or bool(self._comm_failure_zones())
+            or bool(self._device_faults())
+        )
+
+    def _decoded_problems(self) -> list[str]:
+        data = self._data
+        enabled = set(data.get("enabledZones") or [])
+        tamper_zones = data.get("tamperZones") or []
+        problems = [
+            f"Bateria fraca: {self._zone_label(z)}"
+            for z in (data.get("lowBatteryZones") or [])
+            if z in enabled
+        ]
+        problems += [
+            f"Falha de supervisão: {self._zone_label(z)}"
+            for z in self._comm_failure_zones()
+        ]
+        problems += [
+            f"Violação (tamper): {self._zone_label(z)}" for z in tamper_zones
+        ]
+        problems += self._device_faults()
+        if data.get("tamper") and not tamper_zones:
+            problems.append("Violação (tamper) da central")
+        if data.get("batteryStatus") in ("low", "dead"):
+            problems.append("Bateria da central fraca")
+        return problems
+
+    @property
+    def is_on(self) -> bool:
+        """Return True on the panel's problem flag or a decoded fault."""
+        return bool(self._data.get("problem")) or self._active_fault()
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """List the active problems in Portuguese, plus per-device lists."""
+        problems = self._decoded_problems()
+        if not problems and self._data.get("problem"):
+            problems = ["Problema não identificado"]
+        attrs: dict = {"active_problems": problems}
+        for suffix, _singular, _plural, _slug in DEVICE_TYPES:
+            attrs.update(_device_fault_attributes(self._data, suffix))
+        return attrs
+
+
+class AmtDeviceFaultSensor(AmtBaseEntity, BinarySensorEntity):
+    """Aggregate fault indicator for one wireless device type.
+
+    On when any siren (or repeater / keypad) reports a supervision failure,
+    tamper or low battery. Only siren supervision is confirmed live; the
+    other bits follow the same block layout and are inferred.
+    """
+
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(
+        self,
+        coordinator,
+        entry_id: str,
+        suffix: str,
+        singular: str,
+        plural: str,
+        slug: str,
+    ) -> None:
+        """Initialize the device-type fault sensor."""
+        super().__init__(coordinator, entry_id)
+        self._suffix = suffix
+        self._singular = singular
+        self._attr_name = plural
+        self._attr_unique_id = f"{entry_id}_{slug}_fault"
+
+    @property
+    def is_on(self) -> bool | None:
+        """Return True if any device of this type has a fault (None if unknown)."""
+        lists = [self._data.get(prefix + self._suffix) for prefix, _l, _a in FAULT_KINDS]
+        if all(v is None for v in lists):
+            return None
+        return any(lists)
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """List this type's faults in Portuguese, plus per-kind number lists."""
+        return {
+            "faults": _device_fault_labels(self._data, self._suffix, self._singular),
+            **_device_fault_attributes(self._data, self._suffix),
+        }
 
 
 class AmtTamperSensor(AmtBaseEntity, BinarySensorEntity):
